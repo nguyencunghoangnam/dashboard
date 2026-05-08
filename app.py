@@ -16,7 +16,7 @@ DEFAULT_SHEET_URL = (
 
 
 st.set_page_config(
-    page_title="Student Performance Dashboard",
+    page_title="Dashboard Học Sinh",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -312,20 +312,20 @@ except Exception:
 
 
 with st.sidebar:
-    st.header("Data Source")
-    sheet_url = st.text_input("Google Sheet URL", value=secret_sheet_url, key="sheet_url_v5")
-    st.caption("Use a public view-only Google Sheet link, or put it in Streamlit Secrets.")
+    st.header("Nguồn Dữ Liệu")
+    sheet_url = st.text_input("Đường dẫn Google Sheet", value=secret_sheet_url, key="sheet_url_v5")
+    st.caption("Dùng Google Sheet công khai quyền xem hoặc cấu hình trong Streamlit Secrets.")
 
-    refresh = st.button("Refresh data", width="stretch")
+    refresh = st.button("Làm mới dữ liệu", width="stretch")
     if refresh:
         st.cache_data.clear()
 
 st.markdown(
     """
     <div class="hero">
-        <div class="hero-title">Google Sheets Performance Dashboard</div>
+        <div class="hero-title">Dashboard Phân Tích Học Tập</div>
         <div class="hero-subtitle">
-            A live Streamlit dashboard connected to your online spreadsheet.
+            Kết nối trực tiếp Google Sheets, tự động đọc bảng điểm và trực quan hóa dữ liệu học sinh.
         </div>
     </div>
     """,
@@ -465,13 +465,13 @@ primary_metric = score_col or (numeric_cols[0] if numeric_cols else None)
 secondary_metric = attendance_col or (numeric_cols[1] if len(numeric_cols) > 1 else primary_metric)
 
 with st.sidebar:
-    st.header("Filters")
+    st.header("Bộ Lọc")
 
     filtered = data.copy()
 
     if class_col:
         selected_classes = st.multiselect(
-            "Lop",
+            "Lớp",
             sorted_options(data[class_col]),
             default=sorted_options(data[class_col]),
             key="class_filter_v4",
@@ -480,7 +480,7 @@ with st.sidebar:
 
     if grade_col:
         selected_grades = st.multiselect(
-            "Xep loai",
+            "Xếp loại",
             sorted_options(data[grade_col]),
             default=sorted_options(data[grade_col]),
             key="grade_filter_v4",
@@ -489,7 +489,7 @@ with st.sidebar:
 
     if status_col:
         selected_statuses = st.multiselect(
-            "Trang thai",
+            "Trạng thái",
             sorted_options(data[status_col]),
             default=sorted_options(data[status_col]),
             key="status_filter_v4",
@@ -498,7 +498,7 @@ with st.sidebar:
 
     if risk_col:
         selected_risks = st.multiselect(
-            "Muc rui ro",
+            "Mức rủi ro",
             sorted_options(data[risk_col]),
             default=sorted_options(data[risk_col]),
             key="risk_filter_v4",
@@ -507,22 +507,22 @@ with st.sidebar:
 
     if gender_col:
         selected_genders = st.multiselect(
-            "Gioi tinh",
+            "Giới tính",
             sorted_options(data[gender_col]),
             default=sorted_options(data[gender_col]),
             key="gender_filter_v4",
         )
         filtered = filtered[filtered[gender_col].astype(str).isin(selected_genders)]
 
-    st.header("View Settings")
-    st.caption("Dashboard design v5")
+    st.header("Tùy Chỉnh Góc Nhìn")
+    st.caption("Phiên bản giao diện v5")
     if numeric_cols:
         default_primary = numeric_cols.index(primary_metric) if primary_metric in numeric_cols else 0
-        primary_metric = st.selectbox("Main metric", numeric_cols, index=default_primary, key="main_metric_v4")
+        primary_metric = st.selectbox("Chỉ số chính", numeric_cols, index=default_primary, key="main_metric_v4")
 
         default_secondary = numeric_cols.index(secondary_metric) if secondary_metric in numeric_cols else 0
         secondary_metric = st.selectbox(
-            "Compare with",
+            "So sánh với",
             numeric_cols,
             index=default_secondary,
             key="secondary_metric_v4",
@@ -544,11 +544,11 @@ watch_count = int(filtered[status_col].astype(str).isin(["Theo doi", "Can can th
 st.markdown(
     f"""
     <div class="hero">
-        <div class="hero-title">Student Performance Command Center</div>
+        <div class="hero-title">Trung Tâm Điều Hành Học Tập</div>
         <div class="hero-subtitle">
-            Live dashboard from Google Sheets for scores, attendance, progress, classification, and risk signals.
+            Theo dõi điểm số, chuyên cần, tiến bộ, xếp loại và tín hiệu rủi ro từ Google Sheets theo thời gian thực.
         </div>
-        <div class="hero-chip">Connected rows: {student_count:,} / Source columns: {len(data.columns):,}</div>
+        <div class="hero-chip">Đang đọc: {student_count:,} học sinh / {len(data.columns):,} cột dữ liệu</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -556,24 +556,24 @@ st.markdown(
 
 m1, m2, m3, m4, m5 = st.columns(5)
 with m1:
-    metric_card("Students", f"{student_count:,}", "Filtered student records", "blue")
+    metric_card("Học sinh", f"{student_count:,}", "Số bản ghi sau khi lọc", "blue")
 with m2:
-    metric_card("Average Score", "-" if pd.isna(avg_score) else f"{avg_score:.2f}", "Weighted final performance", "good")
+    metric_card("Điểm TB", "-" if pd.isna(avg_score) else f"{avg_score:.2f}", "Điểm tổng hợp có trọng số", "good")
 with m3:
-    metric_card("Excellent Rate", as_percent(safe_rate(excellent_count, student_count)), "Score from 8.0 and above", "blue")
+    metric_card("Tỷ lệ khá giỏi", as_percent(safe_rate(excellent_count, student_count)), "Điểm từ 8.0 trở lên", "blue")
 with m4:
-    metric_card("Avg Attendance", "-" if pd.isna(avg_attendance) else f"{avg_attendance:.1f}%", "Class participation health", "good")
+    metric_card("Chuyên cần TB", "-" if pd.isna(avg_attendance) else f"{avg_attendance:.1f}%", "Sức khỏe tham gia lớp học", "good")
 with m5:
-    metric_card("Need Attention", f"{watch_count:,}", f"High risk: {high_risk_count:,}", "risk" if watch_count else "warn")
+    metric_card("Cần chú ý", f"{watch_count:,}", f"Rủi ro cao: {high_risk_count:,}", "risk" if watch_count else "warn")
 
 st.divider()
 
 executive_tab, student_tab, analytics_tab, table_tab = st.tabs(
-    ["Executive View", "Student Lens", "Deep Analysis", "Data Table"]
+    ["Tổng Quan Điều Hành", "Góc Nhìn Học Sinh", "Phân Tích Sâu", "Bảng Dữ Liệu"]
 )
 
 with executive_tab:
-    st.markdown('<div class="section-title">Performance Overview</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Tổng Quan Hiệu Suất Học Tập</div>', unsafe_allow_html=True)
 
     top_left, top_right = st.columns([1.55, 1])
 
@@ -593,12 +593,12 @@ with executive_tab:
                     y=score_col,
                     color=class_col,
                     markers=True,
-                    title="Score Trend by Class",
+                    title="Xu hướng điểm trung bình theo lớp",
                     color_discrete_sequence=palette,
                 )
             else:
                 trend = trend_source.groupby(pd.Grouper(key=date_col, freq="D"))[score_col].mean().reset_index()
-                fig = px.area(trend, x=date_col, y=score_col, title="Score Trend", color_discrete_sequence=[palette[0]])
+                fig = px.area(trend, x=date_col, y=score_col, title="Xu hướng điểm trung bình", color_discrete_sequence=[palette[0]])
             fig.update_traces(line=dict(width=3), marker=dict(size=7))
             fig.update_yaxes(range=[max(0, min(10, float(filtered[score_col].min()) - 0.5)), 10])
             st.plotly_chart(polish(fig, 430), width="stretch", config=plot_config)
@@ -612,13 +612,13 @@ with executive_tab:
 
     with top_right:
         if risk_col:
-            risk_counts = filtered[risk_col].value_counts().rename_axis(risk_col).reset_index(name="Students")
+            risk_counts = filtered[risk_col].value_counts().rename_axis(risk_col).reset_index(name="Số học sinh")
             fig = px.pie(
                 risk_counts,
                 names=risk_col,
-                values="Students",
+                values="Số học sinh",
                 hole=0.62,
-                title="Risk Composition",
+                title="Cơ cấu mức rủi ro",
                 color=risk_col,
                 color_discrete_map=risk_colors,
             )
@@ -643,7 +643,7 @@ with executive_tab:
                 color="AvgScore",
                 text=summary["AvgScore"].map(lambda value: f"{value:.2f}"),
                 color_continuous_scale="Tealgrn",
-                title="Class Ranking",
+                title="Xếp hạng điểm trung bình theo lớp",
             )
             fig.update_traces(textposition="outside", cliponaxis=False)
             fig.update_xaxes(range=[0, 10])
@@ -651,26 +651,26 @@ with executive_tab:
 
     with c2:
         if grade_col and class_col:
-            grade_mix = filtered.groupby([class_col, grade_col], dropna=False).size().reset_index(name="Students")
+            grade_mix = filtered.groupby([class_col, grade_col], dropna=False).size().reset_index(name="Số học sinh")
             fig = px.bar(
                 grade_mix,
                 x=class_col,
-                y="Students",
+                y="Số học sinh",
                 color=grade_col,
-                title="Classification Mix",
+                title="Cơ cấu xếp loại theo lớp",
                 color_discrete_map=grade_colors,
             )
             st.plotly_chart(polish(fig, 370), width="stretch", config=plot_config)
 
     with c3:
         if status_col and class_col:
-            status_mix = filtered.groupby([class_col, status_col], dropna=False).size().reset_index(name="Students")
+            status_mix = filtered.groupby([class_col, status_col], dropna=False).size().reset_index(name="Số học sinh")
             fig = px.bar(
                 status_mix,
                 x=class_col,
-                y="Students",
+                y="Số học sinh",
                 color=status_col,
-                title="Intervention Status",
+                title="Trạng thái theo dõi theo lớp",
                 color_discrete_map=status_colors,
             )
             st.plotly_chart(polish(fig, 370), width="stretch", config=plot_config)
@@ -687,8 +687,8 @@ with executive_tab:
                 zmin=0,
                 zmax=10,
                 color_continuous_scale="RdYlGn",
-                title="Assessment Heatmap",
-                labels=dict(x="Class", y="Assessment", color="Avg"),
+                title="Bản đồ nhiệt các đầu điểm",
+                labels=dict(x="Lớp", y="Đầu điểm", color="TB"),
             )
             st.plotly_chart(polish(fig, 420), width="stretch", config=plot_config)
 
@@ -706,7 +706,7 @@ with executive_tab:
                 hover_name=student_col,
                 hover_data=hover_cols,
                 color_discrete_map=risk_colors if color_col == risk_col else None,
-                title="Attendance vs Score",
+                title="Chuyên cần và điểm trung bình",
                 opacity=0.86,
             )
             fig.update_traces(marker=dict(line=dict(width=0.8, color="#ffffff")))
@@ -726,7 +726,7 @@ with student_tab:
                 orientation="h",
                 color=progress_col,
                 color_continuous_scale="Viridis",
-                title="Most Improved Students",
+                title="Học sinh tiến bộ nổi bật",
                 hover_data=[col for col in [class_col, score_col, grade_col] if col],
             )
             st.plotly_chart(polish(fig, 460), width="stretch", config=plot_config)
@@ -735,7 +735,7 @@ with student_tab:
         if student_col and score_col:
             rank_cols = [col for col in [student_col, class_col, score_col, attendance_col, progress_col, grade_col, status_col, risk_col] if col]
             rank_table = filtered.sort_values(score_col, ascending=False)[rank_cols].head(12)
-            st.markdown('<div class="section-title">Top Student Snapshot</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title">Nhóm học sinh nổi bật</div>', unsafe_allow_html=True)
             st.dataframe(rank_table, width="stretch", hide_index=True)
 
     watch_cols = [col for col in [student_col, class_col, score_col, attendance_col, late_col, violation_col, progress_col, status_col, risk_col, "GhiChu"] if col and col in filtered.columns]
@@ -747,7 +747,7 @@ with student_tab:
         if status_col:
             watch["_priority"] += watch[status_col].map({"Can can thiep": 3, "Theo doi": 2, "On dinh": 1}).fillna(0)
         watch = watch.sort_values(["_priority", score_col if score_col else watch_cols[0]], ascending=[False, True])
-        st.markdown('<div class="section-title">Priority Watchlist</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Danh sách ưu tiên theo dõi</div>', unsafe_allow_html=True)
         st.dataframe(watch[watch_cols].head(18), width="stretch", hide_index=True)
 
 with analytics_tab:
@@ -761,7 +761,7 @@ with analytics_tab:
                 y=score_col,
                 color=class_col,
                 points="all",
-                title="Score Spread by Class",
+                title="Độ phân tán điểm theo lớp",
                 color_discrete_sequence=palette,
             )
             fig.update_yaxes(range=[0, 10])
@@ -776,7 +776,7 @@ with analytics_tab:
                 color=grade_col,
                 box=True,
                 points="all",
-                title="Attendance Distribution by Classification",
+                title="Phân bố chuyên cần theo xếp loại",
                 color_discrete_map=grade_colors,
             )
             st.plotly_chart(polish(fig, 420), width="stretch", config=plot_config)
@@ -793,30 +793,30 @@ with analytics_tab:
                 color_continuous_scale="RdBu",
                 zmin=-1,
                 zmax=1,
-                title="Correlation Matrix",
+                title="Ma trận tương quan các chỉ số",
             )
             st.plotly_chart(polish(fig, 520), width="stretch", config=plot_config)
 
     with a4:
         if class_col and grade_col:
-            treemap_data = filtered.groupby([class_col, grade_col], dropna=False).size().reset_index(name="Students")
+            treemap_data = filtered.groupby([class_col, grade_col], dropna=False).size().reset_index(name="Số học sinh")
             fig = px.treemap(
                 treemap_data,
                 path=[class_col, grade_col],
-                values="Students",
+                values="Số học sinh",
                 color=grade_col,
                 color_discrete_map=grade_colors,
-                title="Class Structure Treemap",
+                title="Cấu trúc lớp và xếp loại",
             )
             st.plotly_chart(polish(fig, 520), width="stretch", config=plot_config)
 
 with table_tab:
-    st.markdown('<div class="section-title">Cleaned Source Data</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Dữ liệu đã lọc</div>', unsafe_allow_html=True)
     st.dataframe(filtered, width="stretch", hide_index=True)
 
     csv = filtered.to_csv(index=False).encode("utf-8")
     st.download_button(
-        "Download filtered CSV",
+        "Tải dữ liệu đã lọc",
         csv,
         file_name="student_dashboard_filtered_data.csv",
         mime="text/csv",

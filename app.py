@@ -1,4 +1,5 @@
 import re
+from html import escape
 from urllib.parse import parse_qs, urlparse
 
 import numpy as np
@@ -10,12 +11,12 @@ import streamlit as st
 
 DEFAULT_SHEET_URL = (
     "https://docs.google.com/spreadsheets/d/"
-    "1G16aFHLtI8VkzDEuFvmVigIBexySzI8a98HoNPmGPBo/edit?usp=drivesdk"
+    "1G16aFHLtI8VkzDEuFvmVigIBexySzI8a98HoNPmGPBo/edit#gid=1185619496"
 )
 
 
 st.set_page_config(
-    page_title="Google Sheets Dashboard",
+    page_title="Student Performance Dashboard",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -25,29 +26,95 @@ st.markdown(
     """
     <style>
     .block-container {
-        padding-top: 1.4rem;
+        padding-top: 1.2rem;
         padding-bottom: 2rem;
-        max-width: 1440px;
+        max-width: 1480px;
     }
     h1, h2, h3 {
         letter-spacing: 0 !important;
     }
     .hero {
-        border: 1px solid #e5e7eb;
+        position: relative;
+        overflow: hidden;
+        border: 1px solid #dbeafe;
         border-radius: 8px;
-        padding: 18px 20px;
-        background: linear-gradient(135deg, #ffffff 0%, #f8fafc 70%, #ecfeff 100%);
-        margin-bottom: 16px;
+        padding: 24px 26px;
+        background:
+            linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(239,246,255,0.94) 58%, rgba(204,251,241,0.78) 100%);
+        margin-bottom: 18px;
+        box-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
     }
     .hero-title {
-        font-size: 1.95rem;
-        font-weight: 760;
+        font-size: 2.15rem;
+        font-weight: 820;
         color: #0f172a;
-        margin-bottom: 4px;
+        margin-bottom: 5px;
     }
     .hero-subtitle {
+        color: #475569;
+        font-size: 1.02rem;
+        max-width: 820px;
+    }
+    .hero-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 15px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        color: #0f766e;
+        background: rgba(240, 253, 250, 0.92);
+        border: 1px solid rgba(20, 184, 166, 0.25);
+        font-size: 0.88rem;
+        font-weight: 720;
+    }
+    .section-title {
+        margin: 8px 0 12px;
+        color: #0f172a;
+        font-size: 1.1rem;
+        font-weight: 780;
+    }
+    .metric-card {
+        min-height: 138px;
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 17px 18px;
+        box-shadow: 0 12px 26px rgba(15, 23, 42, 0.06);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+    }
+    .metric-label {
         color: #64748b;
-        font-size: 0.98rem;
+        font-size: 0.86rem;
+        font-weight: 740;
+        text-transform: uppercase;
+        letter-spacing: 0;
+    }
+    .metric-value {
+        color: #0f172a;
+        font-size: 2.05rem;
+        font-weight: 860;
+        line-height: 1.05;
+        margin-top: 8px;
+    }
+    .metric-subtext {
+        color: #64748b;
+        font-size: 0.9rem;
+        margin-top: 10px;
+    }
+    .metric-good {
+        border-top: 4px solid #0f766e;
+    }
+    .metric-warn {
+        border-top: 4px solid #f59e0b;
+    }
+    .metric-risk {
+        border-top: 4px solid #dc2626;
+    }
+    .metric-blue {
+        border-top: 4px solid #2563eb;
     }
     [data-testid="stMetric"] {
         background: #ffffff;
@@ -71,10 +138,14 @@ st.markdown(
         border-radius: 8px;
         padding-left: 16px;
         padding-right: 16px;
+        font-weight: 650;
     }
     div[data-testid="stDataFrame"] {
         border: 1px solid #e5e7eb;
         border-radius: 8px;
+    }
+    section[data-testid="stSidebar"] {
+        background: #f8fafc;
     }
     </style>
     """,
@@ -99,13 +170,16 @@ def extract_gid(sheet_url: str) -> str:
     if fragment_gid:
         return fragment_gid
 
-    return "0"
+    return ""
 
 
 def build_csv_url(sheet_url: str) -> str:
     sheet_id = extract_sheet_id(sheet_url)
     gid = extract_gid(sheet_url)
-    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    if gid:
+        csv_url = f"{csv_url}&gid={gid}"
+    return csv_url
 
 
 def compact_number(value: float) -> str:
@@ -178,13 +252,13 @@ def infer_datetime_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     for col in df.columns:
         col_key = str(col).lower()
+        looks_like_date_name = any(token in col_key for token in ["date", "ngay", "time", "timestamp"])
 
         if pd.api.types.is_datetime64_any_dtype(df[col]):
             continue
 
         if pd.api.types.is_numeric_dtype(df[col]):
-            looks_like_date = any(token in col_key for token in ["date", "ngay", "time", "timestamp"])
-            if looks_like_date:
+            if looks_like_date_name:
                 numeric = pd.to_numeric(df[col], errors="coerce")
                 if numeric.dropna().between(20000, 60000).mean() >= 0.72:
                     df[col] = pd.to_datetime(numeric, unit="D", origin="1899-12-30", errors="coerce")
@@ -192,6 +266,16 @@ def infer_datetime_columns(df: pd.DataFrame) -> pd.DataFrame:
 
         series = df[col].dropna()
         if len(series) == 0:
+            continue
+
+        sample = series.astype(str).head(20)
+        looks_like_date_value = sample.str.contains(
+            r"\d{1,4}[-/]\d{1,2}[-/]\d{1,4}",
+            regex=True,
+            na=False,
+        ).mean() >= 0.5
+
+        if not (looks_like_date_name or looks_like_date_value):
             continue
 
         parsed = pd.to_datetime(df[col], errors="coerce", dayfirst=False)
@@ -229,10 +313,10 @@ except Exception:
 
 with st.sidebar:
     st.header("Data Source")
-    sheet_url = st.text_input("Google Sheet URL", value=secret_sheet_url)
+    sheet_url = st.text_input("Google Sheet URL", value=secret_sheet_url, key="sheet_url_v5")
     st.caption("Use a public view-only Google Sheet link, or put it in Streamlit Secrets.")
 
-    refresh = st.button("Refresh data", use_container_width=True)
+    refresh = st.button("Refresh data", width="stretch")
     if refresh:
         st.cache_data.clear()
 
@@ -273,208 +357,468 @@ category_cols = [
     for col in data.columns
     if col not in numeric_cols
     and col not in date_cols
-    and data[col].nunique(dropna=True) <= max(30, int(len(data) * 0.35))
+    and data[col].nunique(dropna=True) <= max(40, int(len(data) * 0.42))
 ]
 
+
+def find_col(candidates: list[str], columns: list[str]) -> str | None:
+    lowered = {str(col).strip().lower(): col for col in columns}
+
+    for candidate in candidates:
+        match = lowered.get(candidate.strip().lower())
+        if match is not None:
+            return match
+
+    for candidate in candidates:
+        key = candidate.strip().lower()
+        for col in columns:
+            if key in str(col).strip().lower():
+                return col
+
+    return None
+
+
+def sorted_options(series: pd.Series) -> list[str]:
+    return sorted([str(value) for value in series.dropna().unique()])
+
+
+def safe_rate(part: int | float, total: int | float) -> float:
+    if not total:
+        return 0.0
+    return float(part) / float(total)
+
+
+def as_percent(value: float) -> str:
+    return f"{value * 100:.1f}%"
+
+
+def metric_card(label: str, value: str, subtext: str, tone: str = "blue") -> None:
+    st.markdown(
+        f"""
+        <div class="metric-card metric-{escape(tone)}">
+            <div>
+                <div class="metric-label">{escape(label)}</div>
+                <div class="metric-value">{escape(value)}</div>
+            </div>
+            <div class="metric-subtext">{escape(subtext)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+plot_config = {
+    "displayModeBar": False,
+    "responsive": True,
+}
+template = "plotly_white"
+palette = ["#2563eb", "#0f766e", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2", "#be123c", "#4338ca"]
+risk_colors = {"Thap": "#0f766e", "Vua": "#f59e0b", "Cao": "#dc2626"}
+status_colors = {"On dinh": "#0f766e", "Theo doi": "#f59e0b", "Can can thiep": "#dc2626"}
+grade_colors = {
+    "Xuat sac": "#0f766e",
+    "Gioi": "#2563eb",
+    "Kha": "#0891b2",
+    "Trung binh": "#f59e0b",
+    "Can ho tro": "#dc2626",
+}
+
+
+def polish(fig: go.Figure, height: int = 380, title_size: int = 18) -> go.Figure:
+    fig.update_layout(
+        template=template,
+        height=height,
+        margin=dict(l=18, r=18, t=58, b=24),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="#ffffff",
+        colorway=palette,
+        title=dict(font=dict(size=title_size, color="#0f172a"), x=0.02, xanchor="left"),
+        font=dict(family="Segoe UI, Arial, sans-serif", color="#334155", size=13),
+        hoverlabel=dict(bgcolor="#0f172a", font_color="#ffffff", bordercolor="#0f172a"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    fig.update_xaxes(showgrid=True, gridcolor="#e5e7eb", zeroline=False, linecolor="#e5e7eb")
+    fig.update_yaxes(showgrid=True, gridcolor="#e5e7eb", zeroline=False, linecolor="#e5e7eb")
+    return fig
+
+
+score_col = find_col(["DiemTrungBinh", "DiemTB", "Average", "Score"], data.columns.tolist())
+attendance_col = find_col(["ChuyenCan", "Attendance"], data.columns.tolist())
+progress_col = find_col(["TienBo", "Progress"], data.columns.tolist())
+class_col = find_col(["Lop", "Class"], data.columns.tolist())
+grade_col = find_col(["XepLoai", "Grade"], data.columns.tolist())
+status_col = find_col(["TrangThai", "Status"], data.columns.tolist())
+risk_col = find_col(["MucRuiRo", "Risk"], data.columns.tolist())
+student_col = find_col(["HoTen", "Student", "Name"], data.columns.tolist())
+gender_col = find_col(["GioiTinh", "Gender"], data.columns.tolist())
+group_col = find_col(["NhomHocTap", "Group"], data.columns.tolist())
+date_col = find_col(["NgayCapNhat", "Date", "Ngay"], date_cols) if date_cols else None
+late_col = find_col(["SoLanDiTre", "Late"], data.columns.tolist())
+violation_col = find_col(["SoLanViPham", "Violation"], data.columns.tolist())
+
+test_cols = [
+    col
+    for col in ["DiemKT1", "DiemKT2", "DiemGiuaKy", "DiemCuoiKy", "DiemDuAn"]
+    if col in data.columns and pd.api.types.is_numeric_dtype(data[col])
+]
+primary_metric = score_col or (numeric_cols[0] if numeric_cols else None)
+secondary_metric = attendance_col or (numeric_cols[1] if len(numeric_cols) > 1 else primary_metric)
+
 with st.sidebar:
-    st.header("Dashboard Controls")
+    st.header("Filters")
 
-    if numeric_cols:
-        primary_metric = st.selectbox("Primary metric", numeric_cols, index=0)
-        secondary_metric = st.selectbox(
-            "Secondary metric",
-            numeric_cols,
-            index=min(1, len(numeric_cols) - 1),
+    filtered = data.copy()
+
+    if class_col:
+        selected_classes = st.multiselect(
+            "Lop",
+            sorted_options(data[class_col]),
+            default=sorted_options(data[class_col]),
+            key="class_filter_v4",
         )
-    else:
-        primary_metric = None
-        secondary_metric = None
+        filtered = filtered[filtered[class_col].astype(str).isin(selected_classes)]
 
-    date_col = st.selectbox("Date column", ["None"] + date_cols, index=0)
-    category_col = st.selectbox("Category column", ["None"] + category_cols, index=0)
-    aggregation = st.selectbox("Aggregation", ["sum", "mean", "median", "count"], index=0)
+    if grade_col:
+        selected_grades = st.multiselect(
+            "Xep loai",
+            sorted_options(data[grade_col]),
+            default=sorted_options(data[grade_col]),
+            key="grade_filter_v4",
+        )
+        filtered = filtered[filtered[grade_col].astype(str).isin(selected_grades)]
+
+    if status_col:
+        selected_statuses = st.multiselect(
+            "Trang thai",
+            sorted_options(data[status_col]),
+            default=sorted_options(data[status_col]),
+            key="status_filter_v4",
+        )
+        filtered = filtered[filtered[status_col].astype(str).isin(selected_statuses)]
+
+    if risk_col:
+        selected_risks = st.multiselect(
+            "Muc rui ro",
+            sorted_options(data[risk_col]),
+            default=sorted_options(data[risk_col]),
+            key="risk_filter_v4",
+        )
+        filtered = filtered[filtered[risk_col].astype(str).isin(selected_risks)]
+
+    if gender_col:
+        selected_genders = st.multiselect(
+            "Gioi tinh",
+            sorted_options(data[gender_col]),
+            default=sorted_options(data[gender_col]),
+            key="gender_filter_v4",
+        )
+        filtered = filtered[filtered[gender_col].astype(str).isin(selected_genders)]
+
+    st.header("View Settings")
+    st.caption("Dashboard design v5")
+    if numeric_cols:
+        default_primary = numeric_cols.index(primary_metric) if primary_metric in numeric_cols else 0
+        primary_metric = st.selectbox("Main metric", numeric_cols, index=default_primary, key="main_metric_v4")
+
+        default_secondary = numeric_cols.index(secondary_metric) if secondary_metric in numeric_cols else 0
+        secondary_metric = st.selectbox(
+            "Compare with",
+            numeric_cols,
+            index=default_secondary,
+            key="secondary_metric_v4",
+        )
+
+if filtered.empty:
+    st.warning("No rows match the selected filters.")
+    st.stop()
 
 
-row_count = len(data)
-column_count = len(data.columns)
-numeric_count = len(numeric_cols)
-category_count = len(category_cols)
+student_count = len(filtered)
+avg_score = filtered[score_col].mean() if score_col else np.nan
+avg_attendance = filtered[attendance_col].mean() if attendance_col else np.nan
+avg_progress = filtered[progress_col].mean() if progress_col else np.nan
+excellent_count = int((filtered[score_col] >= 8).sum()) if score_col else 0
+high_risk_count = int((filtered[risk_col].astype(str) == "Cao").sum()) if risk_col else 0
+watch_count = int(filtered[status_col].astype(str).isin(["Theo doi", "Can can thiep"]).sum()) if status_col else 0
 
-k1, k2, k3, k4 = st.columns(4)
-k1.metric("Rows", f"{row_count:,}")
-k2.metric("Columns", f"{column_count:,}")
-k3.metric("Numeric Fields", f"{numeric_count:,}")
-k4.metric("Category Fields", f"{category_count:,}")
+st.markdown(
+    f"""
+    <div class="hero">
+        <div class="hero-title">Student Performance Command Center</div>
+        <div class="hero-subtitle">
+            Live dashboard from Google Sheets for scores, attendance, progress, classification, and risk signals.
+        </div>
+        <div class="hero-chip">Connected rows: {student_count:,} / Source columns: {len(data.columns):,}</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-if primary_metric:
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric(f"Total {primary_metric}", compact_number(data[primary_metric].sum()))
-    m2.metric(f"Average {primary_metric}", compact_number(data[primary_metric].mean()))
-    m3.metric(f"Minimum {primary_metric}", compact_number(data[primary_metric].min()))
-    m4.metric(f"Maximum {primary_metric}", compact_number(data[primary_metric].max()))
-
+m1, m2, m3, m4, m5 = st.columns(5)
+with m1:
+    metric_card("Students", f"{student_count:,}", "Filtered student records", "blue")
+with m2:
+    metric_card("Average Score", "-" if pd.isna(avg_score) else f"{avg_score:.2f}", "Weighted final performance", "good")
+with m3:
+    metric_card("Excellent Rate", as_percent(safe_rate(excellent_count, student_count)), "Score from 8.0 and above", "blue")
+with m4:
+    metric_card("Avg Attendance", "-" if pd.isna(avg_attendance) else f"{avg_attendance:.1f}%", "Class participation health", "good")
+with m5:
+    metric_card("Need Attention", f"{watch_count:,}", f"High risk: {high_risk_count:,}", "risk" if watch_count else "warn")
 
 st.divider()
 
-overview_tab, analysis_tab, table_tab = st.tabs(["Overview", "Analysis", "Data Table"])
+executive_tab, student_tab, analytics_tab, table_tab = st.tabs(
+    ["Executive View", "Student Lens", "Deep Analysis", "Data Table"]
+)
 
-template = "plotly_white"
-palette = ["#2563eb", "#0f766e", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"]
+with executive_tab:
+    st.markdown('<div class="section-title">Performance Overview</div>', unsafe_allow_html=True)
 
-with overview_tab:
-    if not primary_metric:
-        st.warning("No numeric columns were detected. Add at least one numeric column to build charts.")
-    else:
-        left, right = st.columns([1.45, 1])
+    top_left, top_right = st.columns([1.55, 1])
 
-        with left:
-            if date_col != "None":
+    with top_left:
+        if score_col and date_col:
+            trend_source = filtered.dropna(subset=[date_col, score_col]).copy()
+            if class_col:
                 trend = (
-                    data.dropna(subset=[date_col])
-                    .groupby(pd.Grouper(key=date_col, freq="D"))[primary_metric]
-                    .agg(aggregation)
+                    trend_source.groupby([pd.Grouper(key=date_col, freq="D"), class_col])[score_col]
+                    .mean()
                     .reset_index()
                     .dropna()
                 )
-                fig = go.Figure()
-                fig.add_trace(
-                    go.Scatter(
-                        x=trend[date_col],
-                        y=trend[primary_metric],
-                        mode="lines",
-                        line=dict(color=palette[0], width=3),
-                        fill="tozeroy",
-                        fillcolor="rgba(37, 99, 235, 0.12)",
-                        name=primary_metric,
-                    )
+                fig = px.line(
+                    trend,
+                    x=date_col,
+                    y=score_col,
+                    color=class_col,
+                    markers=True,
+                    title="Score Trend by Class",
+                    color_discrete_sequence=palette,
                 )
-                fig.update_layout(
-                    title=f"{primary_metric} Trend",
-                    template=template,
-                    height=430,
-                    hovermode="x unified",
-                    margin=dict(l=20, r=20, t=60, b=20),
-                )
-                st.plotly_chart(fig, use_container_width=True)
             else:
-                rolling = data[primary_metric].reset_index(drop=True).rolling(7, min_periods=1).mean()
-                fig = go.Figure()
-                fig.add_trace(
-                    go.Scatter(
-                        x=np.arange(1, len(data) + 1),
-                        y=data[primary_metric],
-                        mode="lines",
-                        line=dict(color="#94a3b8", width=1),
-                        name="raw",
-                    )
-                )
-                fig.add_trace(
-                    go.Scatter(
-                        x=np.arange(1, len(data) + 1),
-                        y=rolling,
-                        mode="lines",
-                        line=dict(color=palette[0], width=3),
-                        name="rolling mean",
-                    )
-                )
-                fig.update_layout(
-                    title=f"{primary_metric} Sequence",
-                    template=template,
-                    height=430,
-                    hovermode="x unified",
-                    margin=dict(l=20, r=20, t=60, b=20),
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                trend = trend_source.groupby(pd.Grouper(key=date_col, freq="D"))[score_col].mean().reset_index()
+                fig = px.area(trend, x=date_col, y=score_col, title="Score Trend", color_discrete_sequence=[palette[0]])
+            fig.update_traces(line=dict(width=3), marker=dict(size=7))
+            fig.update_yaxes(range=[max(0, min(10, float(filtered[score_col].min()) - 0.5)), 10])
+            st.plotly_chart(polish(fig, 430), width="stretch", config=plot_config)
+        elif primary_metric:
+            rolling = filtered[primary_metric].reset_index(drop=True).rolling(5, min_periods=1).mean()
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=np.arange(1, len(filtered) + 1), y=filtered[primary_metric], mode="lines", name="Raw", line=dict(color="#94a3b8", width=1)))
+            fig.add_trace(go.Scatter(x=np.arange(1, len(filtered) + 1), y=rolling, mode="lines", name="Rolling mean", line=dict(color=palette[0], width=4)))
+            fig.update_layout(title=f"{primary_metric} Sequence")
+            st.plotly_chart(polish(fig, 430), width="stretch", config=plot_config)
 
-        with right:
-            if category_col != "None":
-                bar_data = (
-                    data.groupby(category_col, dropna=False)[primary_metric]
-                    .agg(aggregation)
-                    .reset_index()
-                    .sort_values(primary_metric, ascending=True)
-                    .tail(12)
-                )
-                fig = px.bar(
-                    bar_data,
-                    x=primary_metric,
-                    y=category_col,
-                    orientation="h",
-                    title=f"Top {category_col}",
-                    color=primary_metric,
-                    color_continuous_scale="Teal",
-                    template=template,
-                )
-                fig.update_layout(height=430, margin=dict(l=20, r=20, t=60, b=20))
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                fig = px.histogram(
-                    data,
-                    x=primary_metric,
-                    nbins=28,
-                    title=f"{primary_metric} Distribution",
-                    template=template,
-                    color_discrete_sequence=[palette[1]],
-                )
-                fig.update_layout(height=430, margin=dict(l=20, r=20, t=60, b=20))
-                st.plotly_chart(fig, use_container_width=True)
-
-with analysis_tab:
-    col_a, col_b = st.columns(2)
-
-    with col_a:
-        if primary_metric:
-            fig = px.box(
-                data,
-                y=primary_metric,
-                x=None if category_col == "None" else category_col,
-                title=f"{primary_metric} Spread",
-                template=template,
-                color=None if category_col == "None" else category_col,
+    with top_right:
+        if risk_col:
+            risk_counts = filtered[risk_col].value_counts().rename_axis(risk_col).reset_index(name="Students")
+            fig = px.pie(
+                risk_counts,
+                names=risk_col,
+                values="Students",
+                hole=0.62,
+                title="Risk Composition",
+                color=risk_col,
+                color_discrete_map=risk_colors,
             )
-            fig.update_layout(height=420, margin=dict(l=20, r=20, t=60, b=20), showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+            fig.update_traces(textposition="inside", textinfo="percent+label", marker=dict(line=dict(color="#ffffff", width=3)))
+            st.plotly_chart(polish(fig, 430), width="stretch", config=plot_config)
 
-    with col_b:
-        if primary_metric and secondary_metric and primary_metric != secondary_metric:
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        if class_col and score_col:
+            summary = (
+                filtered.groupby(class_col, dropna=False)
+                .agg(Students=(score_col, "count"), AvgScore=(score_col, "mean"))
+                .reset_index()
+                .sort_values("AvgScore", ascending=True)
+            )
+            fig = px.bar(
+                summary,
+                x="AvgScore",
+                y=class_col,
+                orientation="h",
+                color="AvgScore",
+                text=summary["AvgScore"].map(lambda value: f"{value:.2f}"),
+                color_continuous_scale="Tealgrn",
+                title="Class Ranking",
+            )
+            fig.update_traces(textposition="outside", cliponaxis=False)
+            fig.update_xaxes(range=[0, 10])
+            st.plotly_chart(polish(fig, 370), width="stretch", config=plot_config)
+
+    with c2:
+        if grade_col and class_col:
+            grade_mix = filtered.groupby([class_col, grade_col], dropna=False).size().reset_index(name="Students")
+            fig = px.bar(
+                grade_mix,
+                x=class_col,
+                y="Students",
+                color=grade_col,
+                title="Classification Mix",
+                color_discrete_map=grade_colors,
+            )
+            st.plotly_chart(polish(fig, 370), width="stretch", config=plot_config)
+
+    with c3:
+        if status_col and class_col:
+            status_mix = filtered.groupby([class_col, status_col], dropna=False).size().reset_index(name="Students")
+            fig = px.bar(
+                status_mix,
+                x=class_col,
+                y="Students",
+                color=status_col,
+                title="Intervention Status",
+                color_discrete_map=status_colors,
+            )
+            st.plotly_chart(polish(fig, 370), width="stretch", config=plot_config)
+
+    h1, h2 = st.columns([1.2, 1])
+
+    with h1:
+        if class_col and test_cols:
+            matrix = filtered.groupby(class_col, dropna=False)[test_cols].mean().T
+            fig = px.imshow(
+                matrix,
+                text_auto=".1f",
+                aspect="auto",
+                zmin=0,
+                zmax=10,
+                color_continuous_scale="RdYlGn",
+                title="Assessment Heatmap",
+                labels=dict(x="Class", y="Assessment", color="Avg"),
+            )
+            st.plotly_chart(polish(fig, 420), width="stretch", config=plot_config)
+
+    with h2:
+        if attendance_col and score_col:
+            hover_cols = [col for col in [student_col, class_col, grade_col, status_col, risk_col] if col]
+            size_col = violation_col if violation_col else None
+            color_col = risk_col if risk_col else class_col
             fig = px.scatter(
-                data,
-                x=primary_metric,
-                y=secondary_metric,
-                color=None if category_col == "None" else category_col,
-                title=f"{secondary_metric} vs {primary_metric}",
-                template=template,
-                color_discrete_sequence=palette,
-                opacity=0.82,
+                filtered,
+                x=attendance_col,
+                y=score_col,
+                color=color_col,
+                size=size_col,
+                hover_name=student_col,
+                hover_data=hover_cols,
+                color_discrete_map=risk_colors if color_col == risk_col else None,
+                title="Attendance vs Score",
+                opacity=0.86,
             )
-            fig.update_layout(height=420, margin=dict(l=20, r=20, t=60, b=20))
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Choose two different numeric fields to show a relationship chart.")
+            fig.update_traces(marker=dict(line=dict(width=0.8, color="#ffffff")))
+            fig.update_yaxes(range=[0, 10])
+            st.plotly_chart(polish(fig, 420), width="stretch", config=plot_config)
 
-    if len(numeric_cols) >= 2:
-        corr = data[numeric_cols].corr(numeric_only=True)
-        fig = px.imshow(
-            corr,
-            text_auto=".2f",
-            color_continuous_scale="RdBu",
-            zmin=-1,
-            zmax=1,
-            title="Correlation Matrix",
-            template=template,
-        )
-        fig.update_layout(height=520, margin=dict(l=20, r=20, t=60, b=20))
-        st.plotly_chart(fig, use_container_width=True)
+with student_tab:
+    left, right = st.columns([1.05, 1])
+
+    with left:
+        if student_col and progress_col:
+            leaders = filtered.nlargest(min(12, len(filtered)), progress_col).sort_values(progress_col, ascending=True)
+            fig = px.bar(
+                leaders,
+                x=progress_col,
+                y=student_col,
+                orientation="h",
+                color=progress_col,
+                color_continuous_scale="Viridis",
+                title="Most Improved Students",
+                hover_data=[col for col in [class_col, score_col, grade_col] if col],
+            )
+            st.plotly_chart(polish(fig, 460), width="stretch", config=plot_config)
+
+    with right:
+        if student_col and score_col:
+            rank_cols = [col for col in [student_col, class_col, score_col, attendance_col, progress_col, grade_col, status_col, risk_col] if col]
+            rank_table = filtered.sort_values(score_col, ascending=False)[rank_cols].head(12)
+            st.markdown('<div class="section-title">Top Student Snapshot</div>', unsafe_allow_html=True)
+            st.dataframe(rank_table, width="stretch", hide_index=True)
+
+    watch_cols = [col for col in [student_col, class_col, score_col, attendance_col, late_col, violation_col, progress_col, status_col, risk_col, "GhiChu"] if col and col in filtered.columns]
+    if watch_cols and (status_col or risk_col):
+        watch = filtered.copy()
+        watch["_priority"] = 0
+        if risk_col:
+            watch["_priority"] += watch[risk_col].map({"Cao": 3, "Vua": 2, "Thap": 1}).fillna(0)
+        if status_col:
+            watch["_priority"] += watch[status_col].map({"Can can thiep": 3, "Theo doi": 2, "On dinh": 1}).fillna(0)
+        watch = watch.sort_values(["_priority", score_col if score_col else watch_cols[0]], ascending=[False, True])
+        st.markdown('<div class="section-title">Priority Watchlist</div>', unsafe_allow_html=True)
+        st.dataframe(watch[watch_cols].head(18), width="stretch", hide_index=True)
+
+with analytics_tab:
+    a1, a2 = st.columns(2)
+
+    with a1:
+        if class_col and score_col:
+            fig = px.box(
+                filtered,
+                x=class_col,
+                y=score_col,
+                color=class_col,
+                points="all",
+                title="Score Spread by Class",
+                color_discrete_sequence=palette,
+            )
+            fig.update_yaxes(range=[0, 10])
+            st.plotly_chart(polish(fig, 420), width="stretch", config=plot_config)
+
+    with a2:
+        if grade_col and attendance_col:
+            fig = px.violin(
+                filtered,
+                x=grade_col,
+                y=attendance_col,
+                color=grade_col,
+                box=True,
+                points="all",
+                title="Attendance Distribution by Classification",
+                color_discrete_map=grade_colors,
+            )
+            st.plotly_chart(polish(fig, 420), width="stretch", config=plot_config)
+
+    a3, a4 = st.columns([1.12, 1])
+
+    with a3:
+        if len(numeric_cols) >= 2:
+            corr_cols = [col for col in numeric_cols if col in filtered.columns]
+            corr = filtered[corr_cols].corr(numeric_only=True)
+            fig = px.imshow(
+                corr,
+                text_auto=".2f",
+                color_continuous_scale="RdBu",
+                zmin=-1,
+                zmax=1,
+                title="Correlation Matrix",
+            )
+            st.plotly_chart(polish(fig, 520), width="stretch", config=plot_config)
+
+    with a4:
+        if class_col and grade_col:
+            treemap_data = filtered.groupby([class_col, grade_col], dropna=False).size().reset_index(name="Students")
+            fig = px.treemap(
+                treemap_data,
+                path=[class_col, grade_col],
+                values="Students",
+                color=grade_col,
+                color_discrete_map=grade_colors,
+                title="Class Structure Treemap",
+            )
+            st.plotly_chart(polish(fig, 520), width="stretch", config=plot_config)
 
 with table_tab:
-    st.subheader("Source Data")
-    st.dataframe(data, use_container_width=True, hide_index=True)
+    st.markdown('<div class="section-title">Cleaned Source Data</div>', unsafe_allow_html=True)
+    st.dataframe(filtered, width="stretch", hide_index=True)
 
-    csv = data.to_csv(index=False).encode("utf-8")
+    csv = filtered.to_csv(index=False).encode("utf-8")
     st.download_button(
-        "Download cleaned CSV",
+        "Download filtered CSV",
         csv,
-        file_name="google_sheet_dashboard_data.csv",
+        file_name="student_dashboard_filtered_data.csv",
         mime="text/csv",
-        use_container_width=False,
+        width="content",
     )

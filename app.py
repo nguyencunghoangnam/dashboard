@@ -10,7 +10,7 @@ import streamlit as st
 
 DEFAULT_SHEET_URL = (
     "https://docs.google.com/spreadsheets/d/"
-    "1MmiEDUwvc1-oajeIHIpJ_qPAEyq_OOqqbj5aGoyQH3M/edit?usp=drive_link"
+    "1G16aFHLtI8VkzDEuFvmVigIBexySzI8a98HoNPmGPBo/edit?usp=drivesdk"
 )
 
 
@@ -152,14 +152,16 @@ def infer_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
         if len(non_blank) == 0:
             continue
 
-        cleaned = (
-            series.str.replace(",", "", regex=False)
-            .str.replace("$", "", regex=False)
-            .str.replace("VND", "", regex=False)
-            .str.replace("USD", "", regex=False)
-            .str.replace("%", "", regex=False)
-            .str.strip()
-        )
+        cleaned = series.str.replace("$", "", regex=False)
+        cleaned = cleaned.str.replace("VND", "", regex=False)
+        cleaned = cleaned.str.replace("USD", "", regex=False)
+        cleaned = cleaned.str.replace("%", "", regex=False)
+        cleaned = cleaned.str.strip()
+
+        # Handle both English decimals (8.68) and Vietnamese decimals (8,68).
+        has_decimal_comma = cleaned.str.match(r"^-?\d+,\d+$", na=False)
+        cleaned = cleaned.where(~has_decimal_comma, cleaned.str.replace(",", ".", regex=False))
+        cleaned = cleaned.where(has_decimal_comma, cleaned.str.replace(",", "", regex=False))
         numeric = pd.to_numeric(cleaned, errors="coerce")
         valid_ratio = numeric.notna().sum() / max(1, len(non_blank))
 
@@ -175,7 +177,17 @@ def infer_datetime_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
     for col in df.columns:
-        if pd.api.types.is_datetime64_any_dtype(df[col]) or pd.api.types.is_numeric_dtype(df[col]):
+        col_key = str(col).lower()
+
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            continue
+
+        if pd.api.types.is_numeric_dtype(df[col]):
+            looks_like_date = any(token in col_key for token in ["date", "ngay", "time", "timestamp"])
+            if looks_like_date:
+                numeric = pd.to_numeric(df[col], errors="coerce")
+                if numeric.dropna().between(20000, 60000).mean() >= 0.72:
+                    df[col] = pd.to_datetime(numeric, unit="D", origin="1899-12-30", errors="coerce")
             continue
 
         series = df[col].dropna()
@@ -249,8 +261,13 @@ if data.empty:
     st.stop()
 
 
-numeric_cols = [col for col in data.columns if pd.api.types.is_numeric_dtype(data[col])]
 date_cols = [col for col in data.columns if pd.api.types.is_datetime64_any_dtype(data[col])]
+identifier_cols = {"stt", "id", "index", "mahs", "ma_hs", "studentid", "student_id"}
+numeric_cols = [
+    col
+    for col in data.columns
+    if pd.api.types.is_numeric_dtype(data[col]) and str(col).strip().lower() not in identifier_cols
+]
 category_cols = [
     col
     for col in data.columns

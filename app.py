@@ -1,4 +1,6 @@
 import re
+from datetime import datetime
+from io import BytesIO
 from html import escape
 from urllib.parse import parse_qs, urlparse
 
@@ -392,6 +394,202 @@ def as_percent(value: float) -> str:
     return f"{value * 100:.1f}%"
 
 
+def safe_text(value: object) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    if isinstance(value, (float, np.floating)):
+        return f"{float(value):.2f}"
+    return str(value)
+
+
+def register_pdf_fonts() -> tuple[str, str]:
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    regular_candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+    ]
+    bold_candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+    ]
+
+    regular_font = "Helvetica"
+    bold_font = "Helvetica-Bold"
+
+    for font_path in regular_candidates:
+        try:
+            pdfmetrics.registerFont(TTFont("DashboardRegular", font_path))
+            regular_font = "DashboardRegular"
+            break
+        except Exception:
+            continue
+
+    for font_path in bold_candidates:
+        try:
+            pdfmetrics.registerFont(TTFont("DashboardBold", font_path))
+            bold_font = "DashboardBold"
+            break
+        except Exception:
+            continue
+
+    return regular_font, bold_font
+
+
+def build_pdf_report(
+    report_data: pd.DataFrame,
+    score_col: str | None,
+    attendance_col: str | None,
+    class_col: str | None,
+    grade_col: str | None,
+    status_col: str | None,
+    risk_col: str | None,
+    student_col: str | None,
+    progress_col: str | None,
+    late_col: str | None,
+    violation_col: str | None,
+) -> bytes:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    regular_font, bold_font = register_pdf_fonts()
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        rightMargin=1.4 * cm,
+        leftMargin=1.4 * cm,
+        topMargin=1.2 * cm,
+        bottomMargin=1.2 * cm,
+    )
+
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="VNTitle", fontName=bold_font, fontSize=18, leading=24, textColor=colors.HexColor("#0f172a")))
+    styles.add(ParagraphStyle(name="VNSub", fontName=regular_font, fontSize=9.5, leading=14, textColor=colors.HexColor("#475569")))
+    styles.add(ParagraphStyle(name="VNHeading", fontName=bold_font, fontSize=12, leading=16, textColor=colors.HexColor("#0f172a"), spaceBefore=10, spaceAfter=7))
+    styles.add(ParagraphStyle(name="VNCell", fontName=regular_font, fontSize=8.2, leading=11, textColor=colors.HexColor("#334155")))
+
+    story = [
+        Paragraph("Báo cáo phân tích kết quả học tập", styles["VNTitle"]),
+        Paragraph(f"Tạo lúc {datetime.now().strftime('%d/%m/%Y %H:%M')} từ dữ liệu đang lọc trên dashboard.", styles["VNSub"]),
+        Spacer(1, 0.35 * cm),
+    ]
+
+    student_count = len(report_data)
+    avg_score = report_data[score_col].mean() if score_col else np.nan
+    avg_attendance = report_data[attendance_col].mean() if attendance_col else np.nan
+    high_risk = int((report_data[risk_col].astype(str) == "Cao").sum()) if risk_col else 0
+    watch = int(report_data[status_col].astype(str).isin(["Theo doi", "Can can thiep"]).sum()) if status_col else 0
+
+    kpi_rows = [
+        ["Chỉ số", "Giá trị"],
+        ["Số học sinh", f"{student_count:,}"],
+        ["Điểm trung bình", "-" if pd.isna(avg_score) else f"{avg_score:.2f}"],
+        ["Chuyên cần trung bình", "-" if pd.isna(avg_attendance) else f"{avg_attendance:.1f}%"],
+        ["Cần chú ý", f"{watch:,}"],
+        ["Rủi ro cao", f"{high_risk:,}"],
+    ]
+    story.append(Paragraph("Tổng quan", styles["VNHeading"]))
+    story.append(make_pdf_table(kpi_rows, regular_font, bold_font, [6.4 * cm, 5.2 * cm]))
+
+    if class_col and score_col:
+        class_summary = (
+            report_data.groupby(class_col, dropna=False)
+            .agg(
+                SiSo=(score_col, "count"),
+                DiemTB=(score_col, "mean"),
+                ChuyenCan=(attendance_col, "mean") if attendance_col else (score_col, "count"),
+            )
+            .reset_index()
+            .sort_values("DiemTB", ascending=False)
+        )
+        class_rows = [["Lớp", "Sĩ số", "Điểm TB", "Chuyên cần"]]
+        for _, row in class_summary.iterrows():
+            class_rows.append([
+                safe_text(row[class_col]),
+                f"{int(row['SiSo'])}",
+                f"{row['DiemTB']:.2f}",
+                "-" if not attendance_col else f"{row['ChuyenCan']:.1f}%",
+            ])
+        story.append(Paragraph("Tổng hợp theo lớp", styles["VNHeading"]))
+        story.append(make_pdf_table(class_rows, regular_font, bold_font, [3.0 * cm, 2.4 * cm, 3.0 * cm, 3.2 * cm]))
+
+    if grade_col or risk_col:
+        mix_rows = [["Nhóm", "Số học sinh"]]
+        for label, col in [("Xếp loại", grade_col), ("Mức rủi ro", risk_col)]:
+            if col:
+                counts = report_data[col].value_counts(dropna=False)
+                for name, count in counts.items():
+                    mix_rows.append([f"{label}: {safe_text(name)}", f"{int(count)}"])
+        story.append(Paragraph("Cơ cấu nhóm", styles["VNHeading"]))
+        story.append(make_pdf_table(mix_rows, regular_font, bold_font, [6.8 * cm, 3.2 * cm]))
+
+    watch_cols = [col for col in [student_col, class_col, score_col, attendance_col, late_col, violation_col, progress_col, status_col, risk_col] if col]
+    if watch_cols:
+        watch_data = report_data.copy()
+        watch_data["_priority"] = 0
+        if risk_col:
+            watch_data["_priority"] += watch_data[risk_col].map({"Cao": 3, "Vua": 2, "Thap": 1}).fillna(0)
+        if status_col:
+            watch_data["_priority"] += watch_data[status_col].map({"Can can thiep": 3, "Theo doi": 2, "On dinh": 1}).fillna(0)
+        watch_data = watch_data.sort_values(["_priority", score_col if score_col else watch_cols[0]], ascending=[False, True])
+        headers = [short_pdf_header(col) for col in watch_cols]
+        rows = [headers]
+        for _, row in watch_data[watch_cols].head(12).iterrows():
+            rows.append([safe_text(row[col]) for col in watch_cols])
+        story.append(Paragraph("Danh sách ưu tiên theo dõi", styles["VNHeading"]))
+        story.append(make_pdf_table(rows, regular_font, bold_font, [3.7 * cm, 1.7 * cm, 1.8 * cm, 2.1 * cm, 1.6 * cm, 1.7 * cm, 1.7 * cm, 2.1 * cm, 1.8 * cm][: len(watch_cols)]))
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
+def short_pdf_header(column: str) -> str:
+    return {
+        "HoTen": "Học sinh",
+        "Lop": "Lớp",
+        "DiemTrungBinh": "Điểm TB",
+        "ChuyenCan": "Chuyên cần",
+        "SoLanDiTre": "Đi trễ",
+        "SoLanViPham": "Vi phạm",
+        "TienBo": "Tiến bộ",
+        "TrangThai": "Trạng thái",
+        "MucRuiRo": "Rủi ro",
+    }.get(column, column)
+
+
+def make_pdf_table(rows: list[list[object]], regular_font: str, bold_font: str, col_widths: list[float]) -> object:
+    from reportlab.lib import colors
+    from reportlab.platypus import Table, TableStyle
+
+    table = Table(rows, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), bold_font),
+                ("FONTNAME", (0, 1), (-1, -1), regular_font),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#dbe3ef")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    return table
+
+
 def metric_card(label: str, value: str, subtext: str, tone: str = "blue") -> None:
     st.markdown(
         f"""
@@ -565,6 +763,30 @@ with m4:
     metric_card("Chuyên cần TB", "-" if pd.isna(avg_attendance) else f"{avg_attendance:.1f}%", "Sức khỏe tham gia lớp học", "good")
 with m5:
     metric_card("Cần chú ý", f"{watch_count:,}", f"Rủi ro cao: {high_risk_count:,}", "risk" if watch_count else "warn")
+
+try:
+    pdf_bytes = build_pdf_report(
+        filtered,
+        score_col,
+        attendance_col,
+        class_col,
+        grade_col,
+        status_col,
+        risk_col,
+        student_col,
+        progress_col,
+        late_col,
+        violation_col,
+    )
+    st.download_button(
+        "Tải báo cáo PDF",
+        data=pdf_bytes,
+        file_name=f"bao_cao_hoc_tap_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+        mime="application/pdf",
+        width="content",
+    )
+except Exception as exc:
+    st.caption(f"Chưa thể tạo PDF: {exc}")
 
 st.divider()
 

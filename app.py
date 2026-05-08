@@ -590,6 +590,260 @@ def make_pdf_table(rows: list[list[object]], regular_font: str, bold_font: str, 
     return table
 
 
+def build_visual_pdf_report(
+    report_data: pd.DataFrame,
+    score_col: str | None,
+    attendance_col: str | None,
+    class_col: str | None,
+    grade_col: str | None,
+    status_col: str | None,
+    risk_col: str | None,
+    student_col: str | None,
+    progress_col: str | None,
+    late_col: str | None,
+    violation_col: str | None,
+) -> bytes:
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    plt.rcParams["font.family"] = "DejaVu Sans"
+    plt.rcParams["axes.unicode_minus"] = False
+
+    buffer = BytesIO()
+    pdf = PdfPages(buffer)
+
+    bg = "#f8fafc"
+    ink = "#0f172a"
+    muted = "#64748b"
+    blue = "#2563eb"
+    teal = "#0f766e"
+    amber = "#f59e0b"
+    red = "#dc2626"
+    grid = "#e5e7eb"
+    colors_map = {
+        "Thap": teal,
+        "Vua": amber,
+        "Cao": red,
+        "On dinh": teal,
+        "Theo doi": amber,
+        "Can can thiep": red,
+        "Xuat sac": teal,
+        "Gioi": blue,
+        "Kha": "#0891b2",
+        "Trung binh": amber,
+        "Can ho tro": red,
+    }
+
+    def fig_title(fig, title: str, subtitle: str = "") -> None:
+        fig.text(0.035, 0.955, title, fontsize=22, fontweight="bold", color=ink, va="top")
+        if subtitle:
+            fig.text(0.035, 0.922, subtitle, fontsize=10.5, color=muted, va="top")
+
+    def style_axis(ax) -> None:
+        ax.set_facecolor("white")
+        ax.grid(True, axis="y", color=grid, linewidth=0.8)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.spines[["left", "bottom"]].set_color(grid)
+        ax.tick_params(colors="#475569", labelsize=9)
+        ax.title.set_color(ink)
+        ax.title.set_fontweight("bold")
+
+    def empty_panel(ax, message: str) -> None:
+        ax.set_axis_off()
+        ax.text(0.5, 0.5, message, ha="center", va="center", color=muted, fontsize=12)
+
+    student_count = len(report_data)
+    avg_score = report_data[score_col].mean() if score_col else np.nan
+    avg_attendance = report_data[attendance_col].mean() if attendance_col else np.nan
+    excellent = int((report_data[score_col] >= 8).sum()) if score_col else 0
+    high_risk = int((report_data[risk_col].astype(str) == "Cao").sum()) if risk_col else 0
+    watch = int(report_data[status_col].astype(str).isin(["Theo doi", "Can can thiep"]).sum()) if status_col else 0
+
+    fig = plt.figure(figsize=(16, 9), facecolor=bg)
+    fig_title(
+        fig,
+        "Báo cáo phân tích kết quả học tập",
+        f"Tạo lúc {datetime.now().strftime('%d/%m/%Y %H:%M')} từ dữ liệu đang lọc trên dashboard",
+    )
+
+    card_specs = [
+        ("Học sinh", f"{student_count:,}", "Bản ghi đang phân tích", blue),
+        ("Điểm TB", "-" if pd.isna(avg_score) else f"{avg_score:.2f}", "Điểm tổng hợp", teal),
+        ("Tỷ lệ khá giỏi", as_percent(safe_rate(excellent, student_count)), "Điểm từ 8.0 trở lên", blue),
+        ("Chuyên cần TB", "-" if pd.isna(avg_attendance) else f"{avg_attendance:.1f}%", "Mức tham gia lớp học", teal),
+        ("Cần chú ý", f"{watch:,}", f"Rủi ro cao: {high_risk:,}", red if watch else amber),
+    ]
+    for idx, (label, value, note, color) in enumerate(card_specs):
+        ax = fig.add_axes([0.035 + idx * 0.188, 0.745, 0.172, 0.13])
+        ax.set_facecolor("white")
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#dbe3ef")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.axhline(1, color=color, linewidth=5)
+        ax.text(0.06, 0.68, label, transform=ax.transAxes, color=muted, fontsize=10, fontweight="bold")
+        ax.text(0.06, 0.36, value, transform=ax.transAxes, color=ink, fontsize=23, fontweight="bold")
+        ax.text(0.06, 0.12, note, transform=ax.transAxes, color=muted, fontsize=9)
+
+    ax_rank = fig.add_axes([0.05, 0.12, 0.43, 0.53])
+    if class_col and score_col:
+        class_summary = report_data.groupby(class_col, dropna=False)[score_col].mean().sort_values()
+        ax_rank.barh(class_summary.index.astype(str), class_summary.values, color=teal)
+        ax_rank.set_xlim(0, 10)
+        ax_rank.set_title("Xếp hạng điểm trung bình theo lớp", loc="left", fontsize=14)
+        ax_rank.set_xlabel("Điểm trung bình")
+        for y, value in enumerate(class_summary.values):
+            ax_rank.text(value + 0.08, y, f"{value:.2f}", va="center", fontsize=9, color=ink)
+        style_axis(ax_rank)
+    else:
+        empty_panel(ax_rank, "Không có dữ liệu lớp/điểm")
+
+    ax_risk = fig.add_axes([0.56, 0.14, 0.36, 0.48])
+    if risk_col:
+        counts = report_data[risk_col].value_counts()
+        pie_colors = [colors_map.get(str(name), blue) for name in counts.index]
+        ax_risk.pie(
+            counts.values,
+            labels=counts.index.astype(str),
+            autopct="%1.0f%%",
+            startangle=90,
+            colors=pie_colors,
+            wedgeprops=dict(width=0.45, edgecolor="white", linewidth=2),
+            textprops=dict(color=ink, fontsize=10),
+        )
+        ax_risk.set_title("Cơ cấu mức rủi ro", fontsize=14, fontweight="bold", color=ink)
+    else:
+        empty_panel(ax_risk, "Không có dữ liệu rủi ro")
+    pdf.savefig(fig, bbox_inches="tight")
+    plt.close(fig)
+
+    fig = plt.figure(figsize=(16, 9), facecolor=bg)
+    fig_title(fig, "Bức tranh hiệu suất", "Xu hướng điểm, cơ cấu xếp loại và bản đồ nhiệt các đầu điểm")
+
+    ax_trend = fig.add_axes([0.05, 0.54, 0.58, 0.32])
+    date_candidates = [col for col in report_data.columns if pd.api.types.is_datetime64_any_dtype(report_data[col])]
+    date_for_pdf = date_candidates[0] if date_candidates else None
+    if score_col and date_for_pdf:
+        trend = report_data.dropna(subset=[date_for_pdf, score_col]).copy()
+        if class_col:
+            for class_name, group in trend.groupby(class_col):
+                series = group.groupby(date_for_pdf)[score_col].mean().sort_index()
+                ax_trend.plot(series.index, series.values, marker="o", linewidth=2.2, label=str(class_name))
+            ax_trend.legend(loc="upper left", ncols=4, fontsize=8, frameon=False)
+        else:
+            series = trend.groupby(date_for_pdf)[score_col].mean().sort_index()
+            ax_trend.plot(series.index, series.values, marker="o", linewidth=2.5, color=blue)
+        ax_trend.set_ylim(0, 10)
+        ax_trend.set_title("Xu hướng điểm trung bình", loc="left", fontsize=14)
+        style_axis(ax_trend)
+    else:
+        empty_panel(ax_trend, "Không có cột ngày phù hợp")
+
+    ax_grade = fig.add_axes([0.70, 0.54, 0.25, 0.32])
+    if grade_col:
+        counts = report_data[grade_col].value_counts()
+        bar_colors = [colors_map.get(str(name), blue) for name in counts.index]
+        ax_grade.bar(counts.index.astype(str), counts.values, color=bar_colors)
+        ax_grade.set_title("Cơ cấu xếp loại", loc="left", fontsize=14)
+        ax_grade.tick_params(axis="x", rotation=25)
+        style_axis(ax_grade)
+    else:
+        empty_panel(ax_grade, "Không có dữ liệu xếp loại")
+
+    ax_heat = fig.add_axes([0.06, 0.09, 0.87, 0.33])
+    test_cols = [
+        col
+        for col in ["DiemKT1", "DiemKT2", "DiemGiuaKy", "DiemCuoiKy", "DiemDuAn"]
+        if col in report_data.columns and pd.api.types.is_numeric_dtype(report_data[col])
+    ]
+    if class_col and test_cols:
+        matrix = report_data.groupby(class_col, dropna=False)[test_cols].mean().T
+        image = ax_heat.imshow(matrix.values, cmap="RdYlGn", vmin=0, vmax=10, aspect="auto")
+        ax_heat.set_xticks(np.arange(len(matrix.columns)))
+        ax_heat.set_xticklabels(matrix.columns.astype(str))
+        ax_heat.set_yticks(np.arange(len(matrix.index)))
+        ax_heat.set_yticklabels(matrix.index.astype(str))
+        ax_heat.set_title("Bản đồ nhiệt các đầu điểm theo lớp", loc="left", fontsize=14)
+        for row in range(matrix.shape[0]):
+            for col in range(matrix.shape[1]):
+                ax_heat.text(col, row, f"{matrix.iloc[row, col]:.1f}", ha="center", va="center", color=ink, fontsize=9)
+        fig.colorbar(image, ax=ax_heat, fraction=0.025, pad=0.015)
+    else:
+        empty_panel(ax_heat, "Không có đủ dữ liệu để tạo heatmap")
+    pdf.savefig(fig, bbox_inches="tight")
+    plt.close(fig)
+
+    fig = plt.figure(figsize=(16, 9), facecolor=bg)
+    fig_title(fig, "Góc nhìn học sinh", "Nhận diện học sinh tiến bộ, nhóm cần theo dõi và mối liên hệ chuyên cần - điểm số")
+
+    ax_scatter = fig.add_axes([0.05, 0.53, 0.43, 0.34])
+    if attendance_col and score_col:
+        color_values = report_data[risk_col].astype(str) if risk_col else pd.Series(["Tất cả"] * len(report_data))
+        for name, group in report_data.groupby(color_values):
+            ax_scatter.scatter(
+                group[attendance_col],
+                group[score_col],
+                s=70,
+                alpha=0.82,
+                color=colors_map.get(str(name), blue),
+                label=str(name),
+                edgecolors="white",
+                linewidth=0.8,
+            )
+        ax_scatter.set_title("Chuyên cần và điểm trung bình", loc="left", fontsize=14)
+        ax_scatter.set_xlabel("Chuyên cần")
+        ax_scatter.set_ylabel("Điểm trung bình")
+        ax_scatter.set_ylim(0, 10)
+        ax_scatter.legend(loc="lower left", fontsize=8, frameon=False)
+        style_axis(ax_scatter)
+    else:
+        empty_panel(ax_scatter, "Không có dữ liệu chuyên cần/điểm")
+
+    ax_progress = fig.add_axes([0.56, 0.53, 0.38, 0.34])
+    if student_col and progress_col:
+        leaders = report_data.nlargest(min(10, len(report_data)), progress_col).sort_values(progress_col)
+        ax_progress.barh(leaders[student_col].astype(str), leaders[progress_col], color=blue)
+        ax_progress.set_title("Học sinh tiến bộ nổi bật", loc="left", fontsize=14)
+        ax_progress.set_xlabel("Mức tăng điểm")
+        style_axis(ax_progress)
+    else:
+        empty_panel(ax_progress, "Không có dữ liệu tiến bộ")
+
+    ax_table = fig.add_axes([0.05, 0.08, 0.9, 0.32])
+    ax_table.axis("off")
+    watch_cols = [col for col in [student_col, class_col, score_col, attendance_col, progress_col, status_col, risk_col] if col]
+    if watch_cols:
+        watch_data = report_data.copy()
+        watch_data["_priority"] = 0
+        if risk_col:
+            watch_data["_priority"] += watch_data[risk_col].map({"Cao": 3, "Vua": 2, "Thap": 1}).fillna(0)
+        if status_col:
+            watch_data["_priority"] += watch_data[status_col].map({"Can can thiep": 3, "Theo doi": 2, "On dinh": 1}).fillna(0)
+        watch_data = watch_data.sort_values(["_priority", score_col if score_col else watch_cols[0]], ascending=[False, True])
+        display = watch_data[watch_cols].head(10).copy()
+        display.columns = [short_pdf_header(col) for col in display.columns]
+        table = ax_table.table(cellText=display.astype(str).values, colLabels=display.columns, loc="center", cellLoc="left")
+        table.auto_set_font_size(False)
+        table.set_fontsize(8.5)
+        table.scale(1, 1.35)
+        for (row, col), cell in table.get_celld().items():
+            cell.set_edgecolor("#dbe3ef")
+            if row == 0:
+                cell.set_facecolor(ink)
+                cell.get_text().set_color("white")
+                cell.get_text().set_fontweight("bold")
+            elif row % 2 == 0:
+                cell.set_facecolor("#f8fafc")
+        ax_table.set_title("Danh sách ưu tiên theo dõi", loc="left", fontsize=14, fontweight="bold", color=ink)
+    else:
+        empty_panel(ax_table, "Không có dữ liệu danh sách theo dõi")
+
+    pdf.savefig(fig, bbox_inches="tight")
+    plt.close(fig)
+    pdf.close()
+    return buffer.getvalue()
+
+
 def metric_card(label: str, value: str, subtext: str, tone: str = "blue") -> None:
     st.markdown(
         f"""
@@ -765,7 +1019,7 @@ with m5:
     metric_card("Cần chú ý", f"{watch_count:,}", f"Rủi ro cao: {high_risk_count:,}", "risk" if watch_count else "warn")
 
 try:
-    pdf_bytes = build_pdf_report(
+    pdf_bytes = build_visual_pdf_report(
         filtered,
         score_col,
         attendance_col,
